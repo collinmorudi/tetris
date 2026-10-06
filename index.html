@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tetris — Milestone 2</title>
+    <title>Tetris — Milestone 3</title>
     <style>
       :root {
         color-scheme: dark;
@@ -57,34 +57,117 @@
   <body>
     <main>
       <h1>TETRIS</h1>
-      <p>10 × 20 well · Milestone 2</p>
+      <p>10 × 20 well · Milestone 3 · Score: <span id="score-value">0</span></p>
       <canvas
         id="game"
         width="300"
         height="600"
         aria-label="Tetris playfield, 10 columns by 20 rows"
       ></canvas>
-      <p class="hint">↑ rotate · ← / → move · ↓ soft drop</p>
+      <p class="hint" id="game-status" aria-live="polite"></p>
+      <p class="hint">↑ rotate · ← / → move · ↓ soft drop · R restart</p>
     </main>
     <script>
       const COLS = 10;
       const ROWS = 20;
       const CELL_SIZE = 30;
       const GRAVITY_MS = 500;
-      const PIECE_COLOR = "#4fc3f7";
-      const PIECE_PIVOT = [1, 0];
-      const PIECE_SHAPE = [
-        [0, 0],
-        [1, 0],
-        [2, 0],
-        [1, 1],
+      const PIECES = [
+        {
+          name: "I",
+          color: "#4fc3f7",
+          pivot: [1.5, 1.5],
+          shape: [
+            [0, 1],
+            [1, 1],
+            [2, 1],
+            [3, 1],
+          ],
+        },
+        {
+          name: "O",
+          color: "#facc15",
+          pivot: [0.5, 0.5],
+          shape: [
+            [0, 0],
+            [1, 0],
+            [0, 1],
+            [1, 1],
+          ],
+        },
+        {
+          name: "T",
+          color: "#a78bfa",
+          pivot: [1, 0],
+          shape: [
+            [0, 0],
+            [1, 0],
+            [2, 0],
+            [1, 1],
+          ],
+        },
+        {
+          name: "S",
+          color: "#4ade80",
+          pivot: [1, 0],
+          shape: [
+            [1, 0],
+            [2, 0],
+            [0, 1],
+            [1, 1],
+          ],
+        },
+        {
+          name: "Z",
+          color: "#fb7185",
+          pivot: [1, 0],
+          shape: [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [2, 1],
+          ],
+        },
+        {
+          name: "J",
+          color: "#60a5fa",
+          pivot: [1, 1],
+          shape: [
+            [0, 0],
+            [0, 1],
+            [1, 1],
+            [2, 1],
+          ],
+        },
+        {
+          name: "L",
+          color: "#fb923c",
+          pivot: [1, 1],
+          shape: [
+            [2, 0],
+            [0, 1],
+            [1, 1],
+            [2, 1],
+          ],
+        },
       ];
-      const occupiedCells = new Set();
 
       const canvas = document.getElementById("game");
       const ctx = canvas.getContext("2d");
-      const piece = { x: 3, y: 0, shape: PIECE_SHAPE };
-      let landed = false;
+      const scoreElement = document.getElementById("score-value");
+      const statusElement = document.getElementById("game-status");
+      let board;
+      let activePiece;
+      let score;
+      let gameOver;
+
+      function createBoard() {
+        return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+      }
+
+      function setStatus(message) {
+        statusElement.textContent = message;
+      }
 
       function draw() {
         ctx.fillStyle = "#0b1220";
@@ -105,18 +188,34 @@
           ctx.stroke();
         }
 
-        ctx.fillStyle = PIECE_COLOR;
-        for (const [dx, dy] of piece.shape) {
-          ctx.fillRect(
-            (piece.x + dx) * CELL_SIZE,
-            (piece.y + dy) * CELL_SIZE,
-            CELL_SIZE,
-            CELL_SIZE,
-          );
+        for (let row = 0; row < ROWS; row++) {
+          for (let col = 0; col < COLS; col++) {
+            if (board[row][col] !== null) {
+              ctx.fillStyle = board[row][col];
+              ctx.fillRect(
+                col * CELL_SIZE,
+                row * CELL_SIZE,
+                CELL_SIZE,
+                CELL_SIZE,
+              );
+            }
+          }
+        }
+
+        if (activePiece) {
+          ctx.fillStyle = activePiece.color;
+          for (const [dx, dy] of activePiece.shape) {
+            ctx.fillRect(
+              (activePiece.x + dx) * CELL_SIZE,
+              (activePiece.y + dy) * CELL_SIZE,
+              CELL_SIZE,
+              CELL_SIZE,
+            );
+          }
         }
       }
 
-      function canOccupy(shape, x = piece.x, y = piece.y) {
+      function canOccupy(shape, x, y) {
         return shape.every(([cellX, cellY]) => {
           const col = x + cellX;
           const row = y + cellY;
@@ -125,59 +224,124 @@
             col < COLS &&
             row >= 0 &&
             row < ROWS &&
-            !occupiedCells.has(row * COLS + col)
+            board[row][col] === null
           );
         });
       }
 
+      function clearCompletedRows() {
+        let cleared = 0;
+        for (let row = ROWS - 1; row >= 0; row--) {
+          if (board[row].every((cell) => cell !== null)) {
+            board.splice(row, 1);
+            board.unshift(Array(COLS).fill(null));
+            cleared++;
+            row++;
+          }
+        }
+
+        if (cleared > 0) {
+          score += cleared * 100;
+          scoreElement.textContent = score;
+        }
+      }
+
+      function spawnPiece() {
+        const definition = PIECES[Math.floor(Math.random() * PIECES.length)];
+        const shape = definition.shape.map(([x, y]) => [x, y]);
+        const minX = Math.min(...shape.map(([x]) => x));
+        const maxX = Math.max(...shape.map(([x]) => x));
+        const x = Math.floor((COLS - (maxX - minX + 1)) / 2) - minX;
+        const candidate = {
+          name: definition.name,
+          color: definition.color,
+          pivot: [...definition.pivot],
+          shape,
+          x,
+          y: 0,
+        };
+
+        if (!canOccupy(candidate.shape, candidate.x, candidate.y)) {
+          activePiece = null;
+          gameOver = true;
+          setStatus("Game Over — press R to restart");
+        } else {
+          activePiece = candidate;
+          setStatus("");
+        }
+        draw();
+      }
+
+      function lockPiece() {
+        if (!activePiece || gameOver) return;
+        for (const [dx, dy] of activePiece.shape) {
+          board[activePiece.y + dy][activePiece.x + dx] = activePiece.color;
+        }
+        activePiece = null;
+        clearCompletedRows();
+        spawnPiece();
+      }
+
       function move(dx, dy) {
-        if (landed || !canOccupy(piece.shape, piece.x + dx, piece.y + dy))
+        if (
+          gameOver ||
+          !activePiece ||
+          !canOccupy(activePiece.shape, activePiece.x + dx, activePiece.y + dy)
+        )
           return false;
-        piece.x += dx;
-        piece.y += dy;
+        activePiece.x += dx;
+        activePiece.y += dy;
         draw();
         return true;
       }
 
       function rotate() {
-        if (landed) return false;
-        const rotatedShape = piece.shape.map(([cellX, cellY]) => {
-          const offsetX = cellX - PIECE_PIVOT[0];
-          const offsetY = cellY - PIECE_PIVOT[1];
-          return [PIECE_PIVOT[0] - offsetY, PIECE_PIVOT[1] + offsetX];
+        if (gameOver || !activePiece) return false;
+        const [pivotX, pivotY] = activePiece.pivot;
+        const rotatedShape = activePiece.shape.map(([cellX, cellY]) => {
+          const offsetX = cellX - pivotX;
+          const offsetY = cellY - pivotY;
+          return [pivotX - offsetY, pivotY + offsetX];
         });
 
-        if (!canOccupy(rotatedShape)) return false;
-        piece.shape = rotatedShape;
+        if (!canOccupy(rotatedShape, activePiece.x, activePiece.y))
+          return false;
+        activePiece.shape = rotatedShape;
         draw();
         return true;
       }
 
       function fall() {
-        if (!move(0, 1)) {
-          landed = true;
-          clearInterval(gravityTimer);
-        }
+        if (!gameOver && activePiece && !move(0, 1)) lockPiece();
+      }
+
+      function resetGame() {
+        board = createBoard();
+        score = 0;
+        gameOver = false;
+        activePiece = null;
+        scoreElement.textContent = score;
+        setStatus("");
+        spawnPiece();
       }
 
       window.addEventListener("keydown", (event) => {
-        if (
-          event.key === "ArrowLeft" ||
-          event.key === "ArrowRight" ||
-          event.key === "ArrowDown" ||
-          event.key === "ArrowUp"
-        ) {
-          event.preventDefault();
+        if (event.key.startsWith("Arrow")) event.preventDefault();
+        if (event.key.toLowerCase() === "r") {
+          resetGame();
+          return;
         }
 
         if (event.key === "ArrowLeft") move(-1, 0);
         if (event.key === "ArrowRight") move(1, 0);
-        if (event.key === "ArrowDown") move(0, 1);
+        if (event.key === "ArrowDown") {
+          if (!move(0, 1)) lockPiece();
+        }
         if (event.key === "ArrowUp") rotate();
       });
 
-      draw();
-      const gravityTimer = setInterval(fall, GRAVITY_MS);
+      resetGame();
+      setInterval(fall, GRAVITY_MS);
     </script>
   </body>
 </html>
